@@ -1,0 +1,631 @@
+## Dryland Biocrust (BSC) Carbon Flux Model
+## Moss crust + Cyanobacteria crust + Lichen crust
+# Pinyon-Juniper site (US-Mpj) in Mountainair, New Mexico
+## written by: Asha Kannan; adapted from Casey Schine Boreal Bryo Model
+## last updated: June 2026
+
+## Note: some WDs hard-coded and need to be changed to run full model
+
+# Model Overview ----------------------------------------------------------
+# For each BSC functional type (moss, cyanobacteria, lichen), gross photosynthesis (Pg)
+# is calculated as: Pg = PgT * PgI/Pgmax * WC_frac * cover_fraction, where
+# Pg_T - temperature-limited Pg (from Webb/Farquhar function)
+# Pg_I = light-limited Pg (Ye 2021, non-rectangular hyperbola), scaled by Pgmax
+# WC_frac = water content scalar (0-1) which is an organism-specific function
+# 
+# cover = fractional cover from transect data
+#
+# Dark respiration (RD) is calculated as 
+# RD = RD_T * WC_frac * cover_fraction, where 
+# RD_T is an expotential function of soil temperature
+# 
+# Net photosynthesis: Pnet = Pg - RD
+# All fluxes are in umol CO2 m-2 s-1, converted to gC m-2 day-1 for summaries
+
+# library loading
+library(tidyverse)
+library(readxl)
+library(minpack.lm)
+library(lubridate)
+library(zoo)
+library(patchwork)
+
+# Working directory/external functions
+setwd("/Users/ashakannan/Documents/GitHub/Dryland-Bryo-BSC-Model")
+
+# temperature scaling of Pgmax used a modified Arrhenius function that rises from 0 at lower temperatures,
+# peaks near T_opt, and declines above that optimum temperature (calc_Pg_fx_T_tk_rowwise)
+# f_H(Tv, delta_S, delta_Hd) is a high-temperature deactiviation term (Farquhar et al.)
+# this gets multipled with calc_Pg_fx_T_Tk_rowwise to create the function for temperature 
+# response curve with a thermal optimum and decline
+source("temp_resp_fxn.R")                    # calc_Pg_fxn_T_Tk_rowwise, f_H
+
+# provides low_water_response_fxn (WC, WC_k, Pgmax), which is when Pg rises from 0 as WC increases
+# above WC_k
+# high_water_response_fxn (WC, slope, intercept, Pgmax) provides linear inhibition
+# Pg declines at very high WC (waterlogged) = unimodal response with optimal WC
+source("water_response_fxn_simple_script.R") # low_water_response_fxn, high_water_response_fxn
+
+
+# Model functions ---------------------------------------------------------
+# Dark respiration: exponential temperature response (Webb et al.)
+# RD = R_o * exp(r_r * temp)
+# R_o = base respiration at 0C (µmol CO2 m-2 s-1)
+# r_r = temperature sensitivity coefficient (degC-1)
+# returns 0 if temp <= 0 (frozen soil = no respiration)
+calc_RD_fxn_T_rowwise <- function(temp, r_r, R_o) {
+  if (temp <= 0) return(0)
+  return(R_o * exp(r_r * temp))
+}
+
+# Net photosynthesis: Ye (2021) light response
+# PN = f_Io_Icomp * ((1-b*PAR) / (1+g*PAR)) * (PAR - Icomp)
+# f_Io_Icomp = quantum yield at low light (initial slope of light response)
+# b = photoinhibition coefficient that causes decline at high PAR
+# g = curvature parameter that controls shape of saturation
+# Icomp = light compensation point (µmol photons m-2 s-1)
+# returns 0 below Icomp (no net photosynthesis in dark or very low light)
+
+# Used for: moss, cyanobacteria, and lichen crusts
+calc_PN_fxn_I_rowwise <- function(PAR, f_Io_Icomp, b, g, Icomp) {
+  PN <- f_Io_Icomp * ((1 - b * PAR) / (1 + g * PAR)) * (PAR - Icomp)
+  return(pmax(PN, 0))
+}
+
+# # Gross photosynthesis: Webb light response
+# calc_Pg_fxn_I_rowwise <- function(PAR, P_gmax_t, I_k) {
+#   PG <- P_gmax_t * (1 - exp(-PAR / I_k))
+#   return(PG)
+# }
+
+# Lichen water response: 4th-degree polynomial fit to Lange et al. (1998)
+# Fitted to Collema tenax net photosynthesis vs water content curve, digitized
+# from Lange et al. (2002) Fig 1 at 26C
+# Input: WC_norm = soil water content normalized to site maximum (0-1)
+# Output: water scalar normalized to peak = 1 (floored at 0)
+# curve is unimodal: peaks at intermediate WC, declines at saturation
+# wc_lich_coef <- c(-0.9377264, 13.7336169, -34.9272136, 32.1387970, -9.8931629)
+# 
+# calc_WC_frac_lich <- function(WC_norm) {
+#   raw <- wc_lich_coef[1] +
+#     wc_lich_coef[2] * WC_norm +
+#     wc_lich_coef[3] * WC_norm^2 +
+#     wc_lich_coef[4] * WC_norm^3 +
+#     wc_lich_coef[5] * WC_norm^4
+#   peak <- max(wc_lich_coef[1] + wc_lich_coef[2]*seq(0,1,0.001) +
+#                 wc_lich_coef[3]*seq(0,1,0.001)^2 +
+#                 wc_lich_coef[4]*seq(0,1,0.001)^3 +
+#                 wc_lich_coef[5]*seq(0,1,0.001)^4)
+#   return(max(0, raw / peak))
+# }
+#
+# Revised Lichen water response: looking at Psora (Lich A, Lich C) and Collema (Lich B)
+# Input: WC_norm = soil water content normalized to site maximum (0-1)
+# Output: water scalar normalized to peak=1 (floored at 0)
+# curve is unimodal: peaks at intermediate WC, declines at saturation
+wc_psora_coef <- c(1.42741, -24.6014, 127.27487, -289.13557, 307.12386, -121.22539)
+wc_collema_coef <- c(-0.0618, -1.1451, 9.1616, -8.8928, 1.7005)
+
+calc_WC_frac_psora <- function(WC_norm) {
+  raw <- wc_psora_coef[1] +
+    wc_psora_coef[2] * WC_norm +
+    wc_psora_coef[3] * WC_norm^2 +
+    wc_psora_coef[4] * WC_norm^3 +
+    wc_psora_coef[5] * WC_norm^4 +
+    wc_psora_coef[6] * WC_norm^5
+  peak <- max(wc_psora_coef[1] +
+                wc_psora_coef[2] * seq(0, 1, 0.001) +
+                wc_psora_coef[3] * seq(0, 1, 0.001)^2 +
+                wc_psora_coef[4] * seq(0, 1, 0.001)^3 +
+                wc_psora_coef[5] * seq(0, 1, 0.001)^4 +
+                wc_psora_coef[6] * seq(0, 1, 0.001)^5)
+  out <- pmax(0, raw/peak)
+  out[WC_norm < 0.10] <- 0   # floor below data range
+  return(out)
+}
+
+calc_WC_frac_collema <- function(WC_norm) {
+  raw <- wc_collema_coef[1] +
+    wc_collema_coef[2] * WC_norm +
+    wc_collema_coef[3] * WC_norm^2 +
+    wc_collema_coef[4] * WC_norm^3 +
+    wc_collema_coef[5] * WC_norm^4
+  peak <- max(wc_collema_coef[1] +
+                wc_collema_coef[2] * seq(0, 1, 0.001) +
+                wc_collema_coef[3] * seq(0, 1, 0.001)^2 +
+                wc_collema_coef[4] * seq(0, 1, 0.001)^3 +
+                wc_collema_coef[5] * seq(0, 1, 0.001)^4)
+  return(pmax(0, raw/peak))
+}
+
+calc_WC_frac_lich <- function(WC_norm) {
+  w_psora * calc_WC_frac_psora(WC_norm) +
+    w_collema * calc_WC_frac_collema(WC_norm)
+}
+
+# -------------------------------------------------------------------------
+# PARAMETERS — MOSS
+# Syntrichia caninervis dominant
+# Tamm et al. (2018) dark respiration fit; temperature response from Webb
+# -------------------------------------------------------------------------
+# Temperature response (Webb/Farquhar) ------------------------------------
+# T_k: temperature at which Pg begins to rise significantly (C)
+# Pgmax: maximum gross photosynthesis rate (µmol CO2 m-2 s-1)
+# delta_S: entropy term that controls thermal optimum location (J mol-1 K-1)
+# delta_Hd: deactivation enthalpy controlling high temperature decline (J mol-1)
+T_k_moss         <- 25
+Pgmax_moss       <- 11
+delta_S_moss     <- 650
+delta_Hd_moss    <- 195000
+
+
+# Dark respiration (exponential) ------------------------------------------
+# r_r: temperature sensitivty (Q-10-type coefficient)
+# RD_min: base respiration at O C (µmol CO2 m-2 s-1)
+# comes from fit to Tamm et al.
+r_r_moss    <- 0.060
+RD_min_moss <- 0.360
+
+
+# Water response (low x high function product) ----------------------------
+# WC_k: threshold water content for photosynthesis activation (normalized)
+# slope, intercept: parameters of linear high-water inhibition function
+# WC_scale_moss: normalizing constant so water scalar peaks at 1
+# Photosynthesis is set to 0 below SWC = 0.05 (air-dry threshold)
+WC_k_moss        <- 0.6
+slope_moss       <- -1
+intercept_moss   <- 1.2
+WC_scale_moss    <- {
+  wc  <- seq(0, 1, 0.01)
+  raw <- low_water_response_fxn(WC=wc, WC_k=WC_k_moss, Pgmax=1) *
+    high_water_response_fxn(WC=wc, slope=slope_moss, intercept=intercept_moss, Pgmax=1)
+  max(raw)
+}
+
+
+# Light response (Ye, 2021) -----------------------------------------------
+# Parameters averaged from 5 lab-cultured Syntrichia caninervis samples measured
+# at discrete PAR levels (0-3000 µmol m-2 s-1)
+# Icomp ranges 8.9-21.9 µmol m-2 s-1, reflecting low-light adaptation for shade-tolerant species
+
+
+# f_Io_Icomp_moss  <- 2.325823e-05
+# b_moss           <- 0.0003509213
+# g_moss           <- 0.04348265
+# Icomp_moss       <- 47.25286p
+f_Io_Icomp_moss <- mean(c(4.87742e-05, 4.56235e-05, 3.3029e-05, 1.53333e-05, 5e-06))
+b_moss          <- mean(c(0.000163003, 0.00028152, 0.000292023, 0.00005, 6.9903e-05))
+g_moss          <- mean(c(0.052469904, 0.026294831, 0.02519835, 0.032071958, 0.063343498))
+Icomp_moss      <- mean(c(8.882681909, 21.03593567, 21.85637586, 10.00783872, 8.981301607))
+
+moss_Pmax_raw   <- max(sapply(seq(0, 2000, 1), function(p)
+  calc_PN_fxn_I_rowwise(p, f_Io_Icomp_moss, b_moss, g_moss, Icomp_moss)))
+moss_light_scale <- Pgmax_moss / moss_Pmax_raw
+
+# -------------------------------------------------------------------------
+# PARAMETERS — CYANOBACTERIA
+# Light response fitted to Ouyang & Hu (2017) AC1-Pn figure (10°C curve)
+# Icomp set to 3.98 µmol m-2 s-1 from fitted curve from Ouyang & Hu (2017)
+# -------------------------------------------------------------------------
+# --- Temperature response (Webb/Farquhar) ---
+# Parameters from literature for cyanobacteria-dominated BSC (Grote et al. 2010)
+# Parameters derived from Grote et al. Table 5 (30C, 40% RWC) and Figure 5
+# Higher T_k and Pgmax than moss reflects cyano heat tolerance
+T_k_cyano        <- 15
+Pgmax_cyano      <- 5.29
+delta_S_cyano    <- 510
+delta_Hd_cyano   <- 160000
+
+# --- Dark respiration ---
+# Parameters from Grote et al. (2010) for cyanobacteria based on Grote et al. Table 5 (30°C, 40% RWC)
+# hardcoded directly here (not fitted)
+# RD = 0.27 * exp(0.07 * temp), approximating Q10 ~ 2
+# Note: these are applied in the model block below as r_r=0.061, R_o=0.466
+
+r_r_cyano <- 0.061
+RD_min_cyano <- 0.466
+
+# Water response (low x high function product -----------------------------
+# Cyano water response: 2nd-degree polynomial fit to dkcyF
+# fitted to dark cynanobacteria (dkcyF) net photosynthesis vs RWC
+wc_cyano_coef <- c(-3.947437, 15.266929, -12.213503)
+
+calc_WC_frac_cyano <- function(WC_norm) {
+  raw <- wc_cyano_coef[1] +
+    wc_cyano_coef[2] * WC_norm +
+    wc_cyano_coef[3] * WC_norm^2
+  peak <- max(wc_cyano_coef[1] + wc_cyano_coef[2]*seq(0,1,0.001) + 
+                wc_cyano_coef[3]*seq(0,1,0.001)^2)
+  return(max(0, raw / peak))
+}
+# WC_k lower than moss = cyano activates at lower moisture levels
+# steeper slope = stronger high-waer inhibition in cyanobacteria
+
+# WC_k_cyano       <- 0.3
+# slope_cyano      <- -1.3
+# intercept_cyano  <- 1.6
+# WC_scale_cyano   <- {
+#   wc  <- seq(0, 1, 0.01)
+#   raw <- low_water_response_fxn(WC=wc, WC_k=WC_k_cyano, Pgmax=1) *
+#     high_water_response_fxn(WC=wc, slope=slope_cyano, intercept=intercept_cyano, Pgmax=1)
+#   max(raw)
+# }
+
+
+# Light response (Ye, 2021) -----------------------------------------------
+# parameters fitted to AC1-Pn light response curve digitized from Ouyang & Hu (2017) Fig1,
+# which represents cyanobacteria-dominated BSC under non-rainfall conditions at 10C
+# Icomp = 3.98 µmol m-2 s-1, consistent with low light compensation points reported for cyano BSC
+# b = 0 indicates no photoinhibition observed in AC1 at measured PAR range
+
+f_Io_Icomp_cyano <- 0.04326016
+b_cyano          <- 0.00000000
+g_cyano          <- 0.06648569
+Icomp_cyano      <- 3.98351439  # fitted to Ouyang & Hu (2017) AC1-Pn data
+
+# Cyano sensor weights from transect data (97.7% open, 2.3% piñon)
+w_O_cyano <- 0.977
+w_P_cyano <- 0.023
+
+cyano_Pmax_raw <- max(sapply(seq(0, 2000, 1), function(p)
+  calc_PN_fxn_I_rowwise(p, f_Io_Icomp_cyano, b_cyano, g_cyano, Icomp_cyano)))
+cyano_light_scale <- Pgmax_cyano / cyano_Pmax_raw
+# -------------------------------------------------------------------------
+# PARAMETERS — LICHEN
+# Temperature response: visual fit to Lange et al. (1998) Fig. 3
+# Collema (LICH2 + PELT = 68%) and Psora (LICH1/3/4 = 32%) weighted average
+# RD: visual fit to Lange et al. (1998) Fig. 3 dark respiration curves
+# Light: averaged from fitted parameters of T2P3lich.A/B/C/D/E samples (field-collected)
+# Water: 5th-degree polynomial fit to lab data
+
+# All parameters are weighted averages of the two major functional groups we saw in the field
+# Species abundances from transect LPI data
+# -------------------------------------------------------------------------
+w_collema <- 0.68
+w_psora   <- 0.32
+
+# Collema temperature parameters
+# visually fitted to Collema tenax response curve from Lange et al. (1998) Fig 3
+# High T_opt reflects sun-adapted cyanolichen
+
+T_k_collema      <- 20
+Pgmax_collema    <- 7.0
+delta_S_collema  <- 500
+delta_Hd_collema <- 158000
+RD_min_collema   <- 0.2 # base respiration at 0C from Lange Fig 3
+r_r_collema      <- 0.065 # temperature sensitivity from Lange Fig 3
+
+# Psora temperature parameters
+# visually fitted to Psora response curve from Lange et al. (1998) Fig 3
+# lower T_opt reflects temperate-adapted lichens
+T_k_psora        <- 8
+Pgmax_psora      <- 2.0
+delta_S_psora    <- 500
+delta_Hd_psora   <- 152000
+RD_min_psora     <- 0.5
+r_r_psora        <- 0.062
+
+# Weighted average lichen parameters
+T_k_lich      <- w_collema * T_k_collema      + w_psora * T_k_psora
+Pgmax_lich    <- w_collema * Pgmax_collema    + w_psora * Pgmax_psora
+delta_S_lich  <- w_collema * delta_S_collema  + w_psora * delta_S_psora
+delta_Hd_lich <- w_collema * delta_Hd_collema + w_psora * delta_Hd_psora
+RD_min_lich   <- w_collema * RD_min_collema   + w_psora * RD_min_psora
+r_r_lich      <- w_collema * r_r_collema      + w_psora * r_r_psora
+
+# Lichen light parameters (weighted average of sample fits)
+# Parameters averaged separately for Psora-type (samples A/C/D) and
+# Collema/Peltula-type (samples B/E) from field gas-exchange measurements,
+# then weighted by species cover fraction, based on lab-measured
+# individual parameters
+f_vals    <- c(0.000080, 0.000193, 0.000007, 0.000009)
+b_vals    <- c(0.000100, 0.000279, 0.000049, 0.000150)
+g_vals    <- c(0.00467988, 0.009162554, 0.005999999, 0.006817831)
+Icomp_vals <- c(62.04133847, 77.34233573, 99.58441226, 99.58441226)
+
+f_psora    <- mean(c(0.000080, 0.000193, 0.000007))
+b_psora    <- mean(c(0.000100, 0.000279, 0.000049))
+g_psora    <- mean(c(0.00467988, 0.009162554, 0.005999999))
+Icomp_psora <- mean(c(62.04133847, 77.34233573, 99.58441226))
+
+f_collema    <- 0.000009
+b_collema    <- 0.000150
+g_collema    <- 0.006817831
+Icomp_collema <- 99.58441226
+
+f_Io_Icomp_lich <- 0.32 * f_psora + 0.68 * f_collema
+b_lich          <- 0.32 * b_psora + 0.68 * b_collema
+g_lich          <- 0.32 * g_psora + 0.68 * g_collema
+Icomp_lich      <- 0.32 * Icomp_psora + 0.68 * Icomp_collema
+
+lich_Pmax_raw   <- max(sapply(seq(0, 2000, 1), function(p)
+  calc_PN_fxn_I_rowwise(p, f_Io_Icomp_lich, b_lich, g_lich, Icomp_lich)))
+lich_light_scale <- Pgmax_lich / lich_Pmax_raw
+
+# Lichen water response ---------------------------------------------------
+# 4th degree polynomial fitted to Collema tenax NP vs WC curve
+# digitzed from Lange et al. (2002) Fig 1 at 26C panel
+# defined above as calc_WC_frac_lich()
+
+
+# Data loading ------------------------------------------------------------
+# Flux data (gapfilled) - hardcoded
+flux_files <- list.files(
+  path = "/Users/ashakannan/Downloads/NMEG (2)",
+  pattern = "US-Mpj_.*_gapfilled\\.txt",
+  full.names = TRUE
+)
+
+flux_raw <- map_dfr(flux_files, function(f) {
+  col_names <- names(read_csv(f, n_max=0, show_col_types=FALSE))
+  read_csv(f, skip=2, col_names=col_names, show_col_types=FALSE)
+}) %>%
+  mutate(
+    datetime = as.POSIXct(as.character(TIMESTAMP_START), format="%Y%m%d%H%M", tz="UTC"),
+    year     = lubridate::year(datetime),
+    month    = lubridate::month(datetime)
+  ) %>%
+  select(datetime, year, month, PPFD_IN, GPP_DT, RECO_DT, TA_F, P_F_FLAG) %>%
+  filter(!is.na(GPP_DT))
+
+# Soil temperature and moisture data
+soil_raw <- read_csv("/Users/ashakannan/Downloads/PJ_soil_allyears_30min.csv") %>%
+  mutate(
+    datetime  = as.POSIXct(TIMESTAMP_END, format="%d-%b-%Y %H:%M:%S", tz="UTC"),
+    SOILT_P_5 = rowMeans(select(., SOILT_P1_5_AVG, SOILT_P2_5_AVG, SOILT_P3_5_AVG), na.rm=TRUE),
+    SOILT_O_5 = rowMeans(select(., SOILT_O1_5_AVG, SOILT_O2_5_AVG, SOILT_O3_5_AVG), na.rm=TRUE),
+    SOILT_J_5 = rowMeans(select(., SOILT_J1_5_AVG, SOILT_J2_5_AVG, SOILT_J3_5_AVG), na.rm=TRUE),
+    SWC_P_5   = rowMeans(select(., SWC_P1_5_AVG_tcor, SWC_P2_5_AVG_tcor, SWC_P3_5_AVG_tcor), na.rm=TRUE),
+    SWC_O_5   = rowMeans(select(., SWC_O1_5_AVG_tcor, SWC_O2_5_AVG_tcor, SWC_O3_5_AVG_tcor), na.rm=TRUE),
+    SWC_J_5   = rowMeans(select(., SWC_J1_5_AVG_tcor, SWC_J2_5_AVG_tcor, SWC_J3_5_AVG_tcor), na.rm=TRUE),
+    SWC_mean  = rowMeans(cbind(SWC_P_5, SWC_O_5, SWC_J_5), na.rm=TRUE),
+    WC_norm   = SWC_mean / max(SWC_mean, na.rm=TRUE)
+  ) %>%
+  select(datetime, SOILT_P_5, SOILT_O_5, SOILT_J_5,
+         SWC_P_5, SWC_O_5, SWC_J_5, SWC_mean, WC_norm) %>%
+  mutate(datetime = datetime - 30*60)  # shift to timestamp_start convention
+
+# Cover fractions
+# hard code bc issues with OneDrive
+results <- read_csv("/Users/ashakannan/Desktop/thesis/radial interpolation/results_coverfrac.csv")
+cover <- results %>%
+  select(year, month, period, w_lich, w_moss, w_cyano, w_canopy, w_midveg)
+
+# calculate climatological monthly means for cover fractions
+# used to fill years where cover data is missing (we have 2014-2018 known)
+cover_climatology <- cover %>%
+  group_by(month, period) %>%
+  summarise(
+    w_lich_clim   = mean(w_lich,   na.rm=TRUE),
+    w_cyano_clim  = mean(w_cyano,  na.rm=TRUE),
+    w_moss_clim   = mean(w_moss,   na.rm=TRUE),
+    w_canopy_clim = mean(w_canopy, na.rm=TRUE),
+    w_midveg_clim = mean(w_midveg, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+
+# Join w/ environmental data ----------------------------------------------
+# PAR on ground: Beer-Lambert attenuation through canopy
+# extinction coefficient k=0.58; for both pinyon pine and juniper
+# open fraction gets full PAR and canopy fraction gets attenuated PAR
+model_input <- flux_raw %>%
+  left_join(soil_raw, by="datetime") %>%
+  mutate(period = ifelse(hour(datetime) >= 6 & hour(datetime) < 20, "DAY", "NIGHT")) %>%
+  left_join(cover, by=c("year", "month", "period")) %>%
+  left_join(cover_climatology, by=c("month", "period")) %>%
+  mutate(
+    w_lich   = ifelse(is.na(w_lich),   w_lich_clim,   w_lich),
+    w_cyano  = ifelse(is.na(w_cyano),  w_cyano_clim,  w_cyano),
+    w_moss   = ifelse(is.na(w_moss),   w_moss_clim,   w_moss),
+    w_canopy = ifelse(is.na(w_canopy), w_canopy_clim, w_canopy),
+    w_midveg = ifelse(is.na(w_midveg), w_midveg_clim, w_midveg),
+    PAR_ground = PPFD_IN * (1 - w_canopy_clim) + PPFD_IN * exp(-0.58) * w_canopy_clim,
+    PPFD_IN  = ifelse(PPFD_IN < 0, NA, PPFD_IN)
+  )
+
+# -------------------------------------------------------------------------
+# RUN MODEL
+# Sensor assignments:
+#   Moss:   100% open (SOILT_O_5, SWC_O_5)
+#   Cyano:  97.7% open + 2.3% piñon (weighted sensor blend)
+#   Lichen: 100% open (all lichen plots are open/no canopy)
+#
+# for each organism:
+# 1. calculate temperature-limited Pg (Pg_T) using Webb/Farquhar
+# 2. calculate water scalar
+# 3. calculate light-limited Pg using Ye (2021)
+# 4. calculate dark respiration (RD_T) using exponential function
+# 5. apply hierarchical multiplicative function
+# 6. scale by water fraction and cover fraction
+# 7. Pnet = Pg - RD
+# -------------------------------------------------------------------------
+model_output <- model_input %>%
+  mutate(
+    # Sensor blends
+    SOILT_moss  = SOILT_O_5,
+    SWC_moss    = SWC_O_5,
+    SOILT_cyano = w_O_cyano * SOILT_O_5 + w_P_cyano * SOILT_P_5,
+    SWC_cyano   = w_O_cyano * SWC_O_5   + w_P_cyano * SWC_P_5,
+    SOILT_lich  = SOILT_O_5,
+    SWC_lich    = SWC_O_5,
+    
+    # Normalized water content (per organism)
+    WC_norm_moss  = SWC_moss  / max(SWC_moss,  na.rm=TRUE),
+    WC_norm_cyano = SWC_cyano / max(SWC_cyano, na.rm=TRUE),
+    WC_norm_lich  = SWC_lich  / max(SWC_lich,  na.rm=TRUE),
+    
+    # PAR at ground surface (Beer-Lambert)
+    PAR_ground = PPFD_IN * (1 - w_canopy_clim) + PPFD_IN * exp(-0.58) * w_canopy_clim
+  ) %>%
+  filter(!is.na(SOILT_moss), !is.na(WC_norm_moss), !is.na(PPFD_IN)) %>%
+  rowwise() %>%
+  mutate(
+    
+    # --- MOSS ---
+    # temperature-limited Pgmax
+    Pg_T_moss = pmax(0,
+                     calc_Pg_fxn_T_Tk_rowwise(temp=SOILT_moss, T_k=T_k_moss, Pgmax=Pgmax_moss) *
+                       f_H(Tv=SOILT_moss, delta_S=delta_S_moss, delta_Hd=delta_Hd_moss)),
+    # water scalar
+    WC_frac_moss = ifelse(SWC_O_5 < 0.05, 0,
+                          (low_water_response_fxn(WC=WC_norm_moss, WC_k=WC_k_moss, Pgmax=1) *
+                             high_water_response_fxn(WC=WC_norm_moss, slope=slope_moss,
+                                                     intercept=intercept_moss, Pgmax=1)) / WC_scale_moss),
+    # light scalar (normalized 0-1)
+    Pn_I_moss = calc_PN_fxn_I_rowwise(PAR=PAR_ground, f_Io_Icomp=f_Io_Icomp_moss,
+                                      b=b_moss, g=g_moss, Icomp=Icomp_moss) * moss_light_scale,
+    
+    
+    # dark respiration
+    RD_T_moss = calc_RD_fxn_T_rowwise(temp=SOILT_moss, r_r=r_r_moss, R_o=RD_min_moss),
+    
+    # convert light scalar to gross photosynthesis
+    Pg_I_moss  = pmax(0, Pn_I_moss  + RD_T_moss),
+    
+    # Pg: temperature ceiling * light fraction * water scalar * cover
+    Pg_moss = (Pg_T_moss * (Pg_I_moss / Pgmax_moss)) * WC_frac_moss * w_moss,
+    RD_moss   = RD_T_moss * WC_frac_moss * w_moss,
+    Pnet_moss = Pg_moss - RD_moss,
+    
+    # --- CYANOBACTERIA ---
+    # temperature-limited Pgmax
+    Pg_T_cyano = pmax(0,
+                      calc_Pg_fxn_T_Tk_rowwise(temp=SOILT_cyano, T_k=T_k_cyano, Pgmax=Pgmax_cyano) *
+                        f_H(Tv=SOILT_cyano, delta_S=delta_S_cyano, delta_Hd=delta_Hd_cyano)),
+    # water scalar
+    WC_frac_cyano = ifelse(SWC_O_5 < 0.05, 0, calc_WC_frac_cyano(WC_norm_cyano)),
+    
+    # light scalar (0-1)
+    Pn_I_cyano = calc_PN_fxn_I_rowwise(PAR=PAR_ground, f_Io_Icomp=f_Io_Icomp_cyano,
+                                       b=b_cyano, g=g_cyano, Icomp=Icomp_cyano) * cyano_light_scale,
+    # dark respiration
+    RD_T_cyano = calc_RD_fxn_T_rowwise(temp=SOILT_cyano, r_r=r_r_cyano, R_o=RD_min_cyano),
+    
+    # light scalar (0-1) for gross photosynthesis conversion
+    Pg_I_cyano  = pmax(0, Pn_I_cyano  + RD_T_cyano),
+    
+    # Pg: temperature ceiling * light fraction * water scalar * cover
+    Pg_cyano   = (Pg_T_cyano * (Pg_I_cyano / Pgmax_cyano)) * WC_frac_cyano * w_cyano,
+    RD_cyano   = RD_T_cyano * WC_frac_cyano * w_cyano,
+    Pnet_cyano = Pg_cyano - RD_cyano,
+    
+    # --- LICHEN ---
+    # temperature-limited Pgmax
+    Pg_T_lich = pmax(0,
+                     calc_Pg_fxn_T_Tk_rowwise(temp=SOILT_lich, T_k=T_k_lich, Pgmax=Pgmax_lich) *
+                       f_H(Tv=SOILT_lich, delta_S=delta_S_lich, delta_Hd=delta_Hd_lich)),
+    # water scalar
+    WC_frac_lich = ifelse(SWC_O_5 < 0.05, 0, calc_WC_frac_lich(WC_norm_lich)),
+    
+    # light scalar (normalized 0-1)
+    Pn_I_lich = calc_PN_fxn_I_rowwise(PAR=PAR_ground, f_Io_Icomp=f_Io_Icomp_lich,
+                                      b=b_lich, g=g_lich, Icomp=Icomp_lich) * lich_light_scale,
+    # dark respiration
+    RD_T_lich = calc_RD_fxn_T_rowwise(temp=SOILT_lich, r_r=r_r_lich, R_o=RD_min_lich),
+    
+    # light scalar (0-1) converted to gross photosynthesis
+    Pg_I_lich  = pmax(0, Pn_I_lich  + RD_T_lich),
+    
+    # Pg: temperature ceiling * light fraction * water scalar * cover
+    Pg_lich   = (Pg_T_lich * (Pg_I_lich / Pgmax_lich)) * WC_frac_lich * w_lich,
+    RD_lich   = RD_T_lich * WC_frac_lich * w_lich,
+    Pnet_lich = Pg_lich - RD_lich,
+    
+    # --- TOTAL BSC ---
+    
+    Pg_BSC   = Pg_moss   + Pg_cyano   + Pg_lich,
+    RD_BSC   = RD_moss   + RD_cyano   + RD_lich,
+    Pnet_BSC = Pnet_moss + Pnet_cyano + Pnet_lich
+    
+  ) %>%
+  ungroup()
+cat("done")
+
+# -------------------------------------------------------------------------
+# MONTHLY CLIMATOLOGY
+# average daily values by month across all years
+# then calculate each BSC type's fraction of total ecosystem GPP
+# -------------------------------------------------------------------------
+# averages all half 
+model_daily <- model_output %>%
+  mutate(date = as.Date(datetime)) %>%
+  group_by(date, year, month) %>%
+  summarise(
+    # Convert µmol CO2 m-2 s-1 → gC m-2 day-1: × 12.011/1e6 × 1800 s × 48 steps
+    GPP_daily        = mean(GPP_DT,    na.rm=TRUE) * 0.021618 * 48,
+    Pg_moss_daily    = mean(Pg_moss,   na.rm=TRUE) * 0.021618 * 48,
+    RD_moss_daily    = mean(RD_moss,   na.rm=TRUE) * 0.021618 * 48,
+    Pnet_moss_daily  = mean(Pnet_moss, na.rm=TRUE) * 0.021618 * 48,
+    Pg_cyano_daily   = mean(Pg_cyano,  na.rm=TRUE) * 0.021618 * 48,
+    RD_cyano_daily   = mean(RD_cyano,  na.rm=TRUE) * 0.021618 * 48,
+    Pnet_cyano_daily = mean(Pnet_cyano,na.rm=TRUE) * 0.021618 * 48,
+    Pg_lich_daily    = mean(Pg_lich,   na.rm=TRUE) * 0.021618 * 48,
+    RD_lich_daily    = mean(RD_lich,   na.rm=TRUE) * 0.021618 * 48,
+    Pnet_lich_daily  = mean(Pnet_lich, na.rm=TRUE) * 0.021618 * 48,
+    Pg_BSC_daily     = mean(Pg_BSC,    na.rm=TRUE) * 0.021618 * 48,
+    RD_BSC_daily     = mean(RD_BSC,    na.rm=TRUE) * 0.021618 * 48,
+    Pnet_BSC_daily   = mean(Pnet_BSC,  na.rm=TRUE) * 0.021618 * 48,
+    .groups = "drop"
+  )
+# -------------------------------------------------------------------------
+# MONTHLY CLIMATOLOGY
+# average daily values by month across all years
+# then calculate each BSC type's fraction of total ecosystem GPP
+# -------------------------------------------------------------------------
+model_monthly <- model_daily %>%
+  group_by(month) %>%
+  summarise(
+    GPP_mean         = mean(GPP_daily,        na.rm=TRUE),
+    Pg_moss_mean     = mean(Pg_moss_daily,    na.rm=TRUE),
+    Pg_cyano_mean    = mean(Pg_cyano_daily,   na.rm=TRUE),
+    Pg_lich_mean     = mean(Pg_lich_daily,    na.rm=TRUE),
+    Pg_BSC_mean      = mean(Pg_BSC_daily,     na.rm=TRUE),
+    Pnet_moss_mean   = mean(Pnet_moss_daily,  na.rm=TRUE),
+    Pnet_cyano_mean  = mean(Pnet_cyano_daily, na.rm=TRUE),
+    Pnet_lich_mean   = mean(Pnet_lich_daily,  na.rm=TRUE),
+    Pnet_BSC_mean    = mean(Pnet_BSC_daily,   na.rm=TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    moss_frac_GPP  = Pg_moss_mean  / GPP_mean,
+    cyano_frac_GPP = Pg_cyano_mean / GPP_mean,
+    lich_frac_GPP  = Pg_lich_mean  / GPP_mean,
+    BSC_frac_GPP   = Pg_BSC_mean   / GPP_mean
+  )
+
+# -------------------------------------------------------------------------
+# ANNUAL CLIMATOLOGY
+# -------------------------------------------------------------------------
+# Annual totals by year — shows interannual variability
+model_annual <- model_daily %>%
+  group_by(year) %>%
+  summarise(
+    GPP_annual         = sum(GPP_daily,        na.rm=TRUE),
+    Pg_moss_annual     = sum(Pg_moss_daily,    na.rm=TRUE),
+    Pg_cyano_annual    = sum(Pg_cyano_daily,   na.rm=TRUE),
+    Pg_lich_annual     = sum(Pg_lich_daily,    na.rm=TRUE),
+    Pg_BSC_annual      = sum(Pg_BSC_daily,     na.rm=TRUE),
+    Pnet_moss_annual   = sum(Pnet_moss_daily,  na.rm=TRUE),
+    Pnet_cyano_annual  = sum(Pnet_cyano_daily, na.rm=TRUE),
+    Pnet_lich_annual   = sum(Pnet_lich_daily,  na.rm=TRUE),
+    Pnet_BSC_annual    = sum(Pnet_BSC_daily,   na.rm=TRUE),
+  ) %>% 
+  mutate(
+    moss_frac_GPP  = Pg_moss_annual  / GPP_annual,
+    cyano_frac_GPP = Pg_cyano_annual / GPP_annual,
+    lich_frac_GPP  = Pg_lich_annual  / GPP_annual,
+    BSC_frac_GPP   = Pg_BSC_annual   / GPP_annual
+  )
+
+print(model_annual)
+
+model_annual %>%
+  summarise(
+    mean_Pnet = mean(Pnet_BSC_annual),
+    sd_Pnet   = sd(Pnet_BSC_annual),
+    min_Pnet  = min(Pnet_BSC_annual),
+    max_Pnet  = max(Pnet_BSC_annual),
+    cv_pct    = sd(Pnet_BSC_annual)/abs(mean(Pnet_BSC_annual))*100
+  )
+
