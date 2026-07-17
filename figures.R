@@ -4,6 +4,13 @@
 
 
 # Setup -------------------------------------------------------------------
+library(maptiles)
+library(tidyterra)
+library(terra)
+library(dplyr)
+library(ggplot2)
+library(ggspatial)
+library(sf)
 library(tidyverse)
 library(lubridate)
 library(patchwork)
@@ -17,6 +24,7 @@ model_daily   <- readRDS("data/model_daily.rds")
 model_monthly <- readRDS("data/model_monthly.rds")
 model_annual  <- readRDS("data/model_annual.rds")
 model_input   <- readRDS("data/model_input.rds")
+
 
 # Source model functions and parameters needed for ecophys curves
 source("R/model.R")  # loads all parameters and functions without re-running model
@@ -38,6 +46,227 @@ shade_shoulder <- data.frame(
   xmax = c(as.Date("2016-04-01"), as.Date("2016-10-15")),
   ymin = -Inf, ymax = Inf, season = "Shoulder season")
 
+
+# Figure 1: Map of Site ---------------------------------------------------
+#install.packages("maptiles")
+#install.packages("tidyterra")
+#install.packages("ggspatial")
+
+# Site constants
+tower_lat <- 34.4385
+tower_lon <- -106.2377
+
+# meters per degree at this latitude
+m_per_deg_lat <- 111320
+m_per_deg_lon <- 111320 * cos(tower_lat * pi / 180)
+
+# function to convert offset in meters from tower to lon/lat
+offset_lonlat <- function(dx_m, dy_m) {
+  list(
+    lon = tower_lon + dx_m / m_per_deg_lon,
+    lat = tower_lat + dy_m / m_per_deg_lat
+  )
+}
+
+# tower point
+tower_sf <- st_as_sf(
+  data.frame(lon=tower_lon, lat=tower_lat, label= "Flux Tower"),
+  coords = c("lon", "lat"), crs=4326
+)
+
+# tower label
+tower_legend_df <- data.frame(
+  lon   = tower_lon,
+  lat   = tower_lat,
+  label = "Flux Tower"
+)
+tower_legend_sf <- st_as_sf(tower_legend_df, coords = c("lon", "lat"), crs = 4326)
+
+
+# transect lines defined from radial interpolation code
+transect_sf <- st_as_sf(
+  transect_lines,
+  coords = c("x_start", "y_start"), crs=4326
+)
+
+# rebuild as linestrings since st_as_sf doesn't handle line endpoints directly
+transect_lines_sf <- transect_lines %>% 
+  rowwise() %>% 
+  mutate(geometry = st_sfc(
+    st_linestring(matrix(
+      c(x_start, y_start, x_end, y_end), ncol=2, byrow=TRUE 
+    )),
+    crs=4326
+  )) %>% 
+  ungroup() %>% 
+  st_as_sf()
+
+# Soil Water Sensors -- approximated from reference map
+# Open Sensors: rougly N and NW of tower (20-30m)
+# Juniper sensors: roughly W and SW (25-35m)
+# Pinyon pine sensors: roughly E (20-30m)
+# Adjust dx_m/dy_m manually once you print the figure!
+sensor_coords <- bind_rows(
+  # Open sensors
+  data.frame(type = "Open",    dx =  -5, dy =  25),
+  data.frame(type = "Open",    dx = -15, dy =  15),
+  data.frame(type = "Open",    dx =  10, dy =  20),
+  # Juniper sensors
+  data.frame(type = "Juniper", dx = -30, dy =  10),
+  data.frame(type = "Juniper", dx = -25, dy = -10),
+  data.frame(type = "Juniper", dx = -20, dy =  25),
+  # Pinyon sensors
+  data.frame(type = "Pinyon",   dx =  25, dy = -15),
+  data.frame(type = "Pinyon",   dx =  30, dy =  10),
+  data.frame(type = "Pinyon",   dx =  20, dy = -25),
+  # Flux tower
+  data.frame(type = "Flux Tower", dx =   0, dy =   0)
+) %>%
+  rowwise() %>% 
+  mutate(
+    lon = tower_lon + dx / m_per_deg_lon,
+    lat = tower_lat + dy / m_per_deg_lat
+  ) %>% 
+  ungroup()
+sensors_sf <- st_as_sf(sensor_coords, coords=c("lon", "lat"), crs=4326)
+
+# Soil pits (approx from reference map)
+pit_coords <- bind_rows(
+  data.frame(type = "Open",    dx =  -8, dy =  18),
+  data.frame(type = "Juniper", dx = -28, dy =   5),
+  data.frame(type = "Pinyon",   dx =  22, dy = -20)
+) %>%
+  rowwise() %>%
+  mutate(
+    lon = tower_lon + dx / m_per_deg_lon,
+    lat = tower_lat + dy / m_per_deg_lat
+  ) %>%
+  ungroup()
+pits_sf <- st_as_sf(pit_coords, coords=c("lon", "lat"), crs=4326)
+
+# footprint contours from mean annual day footprint (assumes mean_annual_day alr computed)
+fpt_df <- as.data.frame(mean_annual_day, xy=T)
+colnames(fpt_df) <- c("lon", "lat", "weight")
+fpt_vals <- sort(fpt_df$weight, decreasing=TRUE, na.last=NA)
+fpt_cum <- cumsum(fpt_vals) / sum(fpt_vals)
+level_50 <- fpt_vals[which.min(abs(fpt_cum - 0.50))]
+level_80 <- fpt_vals[which.min(abs(fpt_cum - 0.80))]
+
+# build biocrust cover df from veg_f2
+biocrust_rast <- max(veg_f2[["cover_cyano"]],
+                     veg_f2[["cover_lich"]],
+                     veg_f2[["cover_moss"]],
+                     na.rm = TRUE)
+names(biocrust_rast) <- "biocrust"
+
+bsc_df <- as.data.frame(biocrust_rast, xy = TRUE)
+colnames(bsc_df) <- c("lon", "lat", "biocrust")
+
+# bounding box for map tile download & zoom in around tower with 150 m buffer on all sides
+buf_deg_lon <- 150 / m_per_deg_lon
+buf_deg_lat <- 150 / m_per_deg_lat
+
+bbox <- st_bbox(c(
+  xmin = tower_lon - buf_deg_lon,
+  xmax = tower_lon + buf_deg_lon,
+  ymin = tower_lat - buf_deg_lat,
+  ymax = tower_lat + buf_deg_lat
+), crs=st_crs(4326))
+
+# download satellite tiles
+tiles <- get_tiles(bbox, provider = "Esri.WorldImagery", zoom=18, crop=TRUE)
+
+
+
+# Build the figure!
+fig_map <- ggplot() +
+  # satellite basemap
+  geom_spatraster_rgb(data=tiles) +
+  
+  # biocrust cover overlay (alpha to show veg structure
+  geom_raster(data=bsc_df %>% filter(!is.na(biocrust)),
+              aes(x=lon, y=lat, fill=biocrust), alpha=0.6) +
+  scale_fill_gradient(low="transparent", high="mediumpurple4",
+                      name="Biocrust\ncover fraction",
+                      na.value="transparent") +
+  
+  # footprint contours -- 50% and 80% as separate layers so each gets a legend label
+  geom_contour(data=fpt_df %>% filter(!is.na(weight)),
+               aes(x=lon, y=lat, z=weight, linetype="50% footprint"),
+               breaks=level_50,
+               color="black", linewidth=3, alpha=0.6) +
+  geom_contour(data=fpt_df %>% filter(!is.na(weight)),
+               aes(x=lon, y=lat, z=weight, linetype="80% footprint"),
+               breaks=level_80,
+               color="black", linewidth=3, alpha=0.6) +
+  
+  # transect lines
+  geom_sf(data=transect_lines_sf,
+          aes(linetype="Transect"),
+          color="black", linewidth=3) +
+  
+  # combined linetype legend for contours + transects
+  scale_linetype_manual(
+    name="Footprint / Transects",
+    values=c("50% footprint"="solid",
+             "80% footprint"="dashed",
+             "Transect"="dotted"),
+    guide=guide_legend(override.aes=list(linewidth=1.2, color="black"))
+  ) +
+  
+  # flux tower and sensors
+  geom_sf(data=sensors_sf,
+          aes(shape=type, color=type), fill="white",
+          size=14, stroke=3) +
+  scale_color_manual(
+    values=c(
+      "Open" = "salmon4",
+      "Juniper" = "maroon3",
+      "Pinyon" = "darkblue",
+      "Flux Tower" = "black"
+    ),
+    name="Site sensors"
+  ) +
+  scale_shape_manual(values=c(
+    "Open" = 0,
+    "Juniper" = 1,
+    "Pinyon" = 2,
+    "Flux Tower" = 24
+  ),
+  name="Site sensors") +
+  # north arrow and scale bar via annotation
+  annotation_scale(location = "br", width_hint = 0.3,
+                   text_col = "white", line_col = "white",
+                   bar_cols = c("white", "grey50"),
+                   text_cex=1.5) +
+  annotation_north_arrow(location = "tl",
+                         style = north_arrow_minimal(text_col = "white",
+                                                     line_col = "white",
+                                                     fill = "white",
+                                                     text_size=20)) +
+  
+  coord_sf(
+    xlim = c(tower_lon - buf_deg_lon, tower_lon + buf_deg_lon),
+    ylim = c(tower_lat - buf_deg_lat, tower_lat + buf_deg_lat),
+    expand = FALSE
+  ) +
+  
+  labs(x = "Longitude", y = "Latitude") +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size=20),
+    axis.title = element_text(size=30),
+    legend.text = element_text(size=30),
+    legend.title = element_text(size=30),
+    legend.background = element_rect(fill = "white", color=NA),
+    legend.position = "right",
+    legend.key.height=unit(2, "cm")
+  )
+
+ggsave("fig_site_map.png", fig_map, width = 20, height = 20, dpi = 300)
+
+  
+  
 
 # Figure 3 — Ecophysiological response curves + site environment ----------
 
@@ -409,3 +638,5 @@ p_sens <- ggplot() +
 fig5 <- p_pct / p_sens + plot_layout(heights=c(1, 1))
 fig5
 ggsave("figures/fig5_percent_gpp.png", fig5, width=12, height=10, dpi=300)
+
+

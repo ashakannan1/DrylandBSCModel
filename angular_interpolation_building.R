@@ -1,11 +1,16 @@
-## Title: Radial Interpolation Methods — MODEL BUILDING
+## Title: Angular Interpolation Methods — MODEL BUILDING
 ## Created by: Asha Kannan
 ## Created on: 4-8-2026
 ## Split: model-building logic only (see 02_figures.R for plots/animations/stats)
 
 # =============================================================
-# Section 1: Libraries + Packages + Set Working Directory
+# Section 1: Libraries + Packages
 # =============================================================
+## This script uses here::here() to set working directory. Open via its .Rproj file (or run from project root)
+## and paths below should resolve automatically
+## Expected folders: data/mpj_transects.xlsx (LPI data) and data/monthly_footprint_climatology_weight_map (Chu et al. 2021 .tif files)
+## Run Section 1 to install/load required packages
+
 library(readxl)
 library(dplyr)
 library(tidyr)
@@ -14,7 +19,8 @@ library(terra)
 library(stringr)
 library(av)
 
-setwd("/Users/ashakannan/Library/CloudStorage/OneDrive-Personal/Desktop/thesis/radial interpolation")
+# here::here() anchors all paths to the project root so this script will run on the same machine/OS without editing setwd() calls
+library(here)
 
 # =============================================================
 # Section 2: Site Constants & Coordinate References
@@ -85,7 +91,7 @@ transect_lines <- transect_info %>%
 # point into a functional group, and compute percent cover fractions binned into 8m
 # intervals matching the footprint raster pixel size
 #
-# Input: mpj_transects.xlsx
+# Input: mpj_transects.xlsx (expected at data/mpj_transects.xlsx)
 # - one sheet per transect
 # - cols A:K contain dist and veg data
 # - cols L + ignored
@@ -130,9 +136,6 @@ read_transect <- function(sheet_name, azimuth) {
   return(df)
 }
 
-# set wd
-setwd("/Users/ashakannan/Library/CloudStorage/OneDrive-Personal/Desktop/thesis/radial interpolation")
-
 # read all 3 transects & stack within the same df
 # drop empty cols from Excel explor
 transects <- bind_rows(
@@ -144,7 +147,6 @@ transects <- bind_rows(
 
 ## check: should have 1500 rows (500 points * 3 transects) and 13 cols
 head(transects)
-
 
 # Canopy Code Standardization ---------------------------------------------
 # some codes have multiple versions in raw data
@@ -165,7 +167,6 @@ transects <- transects %>%
     canopy  = clean_canopy(canopy),
     canopy2 = clean_canopy(canopy2)
   ) 
-
 
 # Functional group codes --------------------------------------------------
 # define classification groups based on IDs used in the LPI excel file
@@ -193,7 +194,6 @@ transects <- transects %>%
     )
   )
 
-
 # define what codes correspond to diff functional groups
 crust_codes <- c("dkcy", "ltcy", "LICH1", "LICH2", "PSOR", "TONI", "LICH3", "LICH4", "PELT", "MOSS1", "MOSS3")
 midveg_codes <- c("grass", "OPUN", "yucca", "snake", "LEAF")
@@ -201,8 +201,6 @@ subcanopy_codes <- c("PINJ", "JUNIP", "OAK")
 canopy_codes <- c("PINJ canopy", "JUNIP canopy", "PJ canopy")
 exclude_codes <- c("EQUIP", "treeLICH")
 abiotic_codes <- c("BARE", "EQUIP", "DUFF", "GRAV", "COBB", "BOUL", "STON")
-
-
 
 # function to check if any column in a row matches a set of codes
 any_matches <- function(df, cols, codes) {
@@ -212,7 +210,6 @@ any_matches <- function(df, cols, codes) {
 # all veg cols to search across
 veg_cols <- c("canopy", "canopy2", "top_veg", "veg2", "veg3", "other_veg",
               "soil_surf", "soil2")
-
 
 # total points (denominator)
 n_total <- nrow(transects)
@@ -225,8 +222,8 @@ surface_cover <- transects %>%
   arrange(desc(pct_cover))
 
 sum(surface_cover$pct_cover)  # should be 100%
-
 print(surface_cover)
+
 # add binary presence columns for each functional group - does this sect include this veg type
 transects <- transects %>% 
   mutate(
@@ -251,7 +248,6 @@ transects %>%
          has_canopy = is_canopy) %>% 
   count(crust_type, has_midveg, has_canopy)
 
-
 # summarize the total number of veg types per row
 transects %>%
   summarise(
@@ -265,7 +261,6 @@ transects %>%
     n_exclude    = sum(is_exclude),
     n_abiotic   = sum(is_abiotic)
   )
-
 
 # Distance binning --------------------------------------------------------
 # bin each transect point into 8m intervals for matching footprint pixel size
@@ -286,7 +281,6 @@ transects <- transects %>%
     # also store the bin center distance for later spatial analysis
     bin_center = (dist_bin - 0.5) * bin_width
   )
-
 
 # Cover Fraction Calculation ----------------------------------------------
 # for each transect x distance bin, compute the fraction of included points 
@@ -346,7 +340,6 @@ build_veg_idw_raster <- function(fpt_template) {
   # use crds() instead of as.data.frame() so it works on empty template rasters
   coords <- crds(fpt_template, na.rm=FALSE)
   df <- data.frame(lon=coords[,1], lat=coords[,2], fpt_val = NA)
-  
   
   # convert pixel centers to meters relative to tower
   # calculate bearing from tower to each pixel
@@ -488,7 +481,7 @@ build_veg_idw_raster <- function(fpt_template) {
   
   return(veg)
 } # end build_veg_idw_raster
-  
+
 # ====================================
 # Section 6: Footprint File Loading & Metadata
 # ====================================
@@ -501,7 +494,7 @@ build_veg_idw_raster <- function(fpt_template) {
 # - empty cols for weighted cover fractions
 # ====================================
 # path to Chu et al. footprint raster files
-fpt_dir <- "/Users/ashakannan/Downloads/monthly_footprint_climatology_weight_map"
+fpt_dir <- here("data", "monthly_footprint_climatology_weight_map")
 
 # get all US-Mpj footprint files
 fpt_files <- list.files(
@@ -572,7 +565,6 @@ weight_max <- max(sapply(results$filepath, function(f) {
   global(rast(f), "max", na.rm = TRUE)[[1]]
 }))
 cat("Max footprint weight across all files:", weight_max, "\n")
-
 
 x_min <- ext(master_template)[1]
 x_max <- ext(master_template)[2]
@@ -645,14 +637,14 @@ if (n_failed > 0) {
   cat("All files processed successfully\n")
 }
 
-setwd("/Users/ashakannan/Documents/GitHub/Dryland-Bryo-BSC-Model")
-write.csv(results, "~/Desktop/results_coverfrac.csv", row.names = FALSE)
-write.csv(results, "results_coverfrac.csv", row.names = FALSE)
+## write results to project-relative outputs folder
+dir.create(here("outputs"), showWarnings=FALSE)
+write.csv(results, here("outputs", "results_coverfrac.csv"), row.names = FALSE)
 
 # =============================================================
 # END OF MODEL BUILDING
 # =============================================================
-# Downstream consumers (figures, animations, stats) need:
+# Downstream products (figures, animations, stats) need:
 #   - transects, cover_fractions          (Sections 3-4)
 #   - build_veg_idw_raster()              (Section 5)
 #   - results, master_template, weight_max, x_min/x_max/y_min/y_max (Sections 6-7)

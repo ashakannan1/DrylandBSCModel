@@ -1,0 +1,268 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={README},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{README}
+\author{}
+\date{\vspace{-2.5em}}
+
+\begin{document}
+\maketitle
+
+\textbf{\emph{Data Folders}} 1. \textbf{LICOR} This folder includes all
+of the raw and standardized data from infrared gas analysis lab
+experiments. This data is further organized by crust type, including
+moss cultures, combined CO2/water curves on cultures, combined CO2/water
+curves on cyanobacteria crust, cyanobacteria crust single factor curves,
+and lichen crust curves. Within a given folder, there are raw data files
+outputted directly from the LICOR-6800. Defined below are the relevant
+columns:\\
+- elapsed (seconds)\\
+- A\_scaled (mumol/m2/s): carbon assimilation scaled by dry weight and
+mass of sample\\
+- A (mumol/kg/s): carbon assimilation recorded by LICOR machine\\
+- Qin (mumol/m2/s): light level observed by LICOR machine\\
+- CO2\_r (ppm): CO2 level observed by LICOR machine\\
+- Tair (degC): temperature observed by LICOR machine\\
+
+These files are used as a foundation to develop relevant mathematical
+relationships. This data has been cleaned and scaled appropriately by
+dry weights and masses. These data were collected by Asha Kannan
+(2025-2026), and cleaned with protocol developed by Kirsten Coe.\\
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  \textbf{NMEG} This folder includes all the flux tower data files, with
+  both gaps and gapfilled, available. Our model pulls the gapfilled
+  files. All files are named with the following format:
+  US-Mpj\_{[}year{]}\_gapfilled.txt. Defined below are the relevant
+  columns:\\
+\end{enumerate}
+
+\begin{itemize}
+\tightlist
+\item
+  TIMESTAMP\_START (YYYYMMDDHHMM) and TIMESTAMP\_END (YYYYMMDDHHMM):
+  used as timesteps in the model\\
+\item
+  PPFD\_IN (mumol/m2/s): light used in the model\\
+\item
+  GPP\_DT (mumol/m2/s): ecosystem GPP (gapfilled) in model\\
+\item
+  RECO\_DT (mumol/m2/s): ecosystem respiration (gapfilled) in model\\
+\item
+  TA\_F (degC): temperature recorded by flux tower\\
+\item
+  P\_F\_FLAG (--)\\
+\end{itemize}
+
+These files are used in DrylandBSCModel\_June2026.R in additional to
+angular\_interpolation\_building.R. These data were provided by Rae
+DeVan \& Marcy Litvak at the University of New Mexico.\\
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{2}
+\tightlist
+\item
+  \textbf{monthly\_footprint\_climatology\_weight\_map}\\
+  This folder includes all the monthly footprint climatology .tif files
+  downloaded from Chu et al.~(2021) Supplementary Dataset. See more
+  information here: \url{https://zenodo.org/records/4015350}. All files
+  are in the following format:
+  US-Mpj\_{[}YYYY{]}\emph{{[}MM{]}}{[}DAY/NIGHT{]}\_fpt\_weight.tif.\\
+\end{enumerate}
+
+These files are used in angular\_interpolation\_building.R.\\
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{3}
+\tightlist
+\item
+  \textbf{PJ\_soil\_allyears\_30min.csv} This file contains relevant
+  soil moisture and soil temperature information from sensors at the
+  US-Mpj site. Columns are defined in this format for temperature
+  sensors: SOILT\_{[}P,O,J{]}{[}1,2,3{]}\_{[}5,10,30{]}\_AVG, where
+  P/O/J relates to the relevant canopy cover (pinyon pine, open, or
+  juniper), 1/2/3 refers to the unit number, and 5/10/30 refers to the
+  depth of the relevant sensor, either 5, 10, or 30 cm below the
+  surface.
+\end{enumerate}
+
+This file was used as environmental inputs in
+DrylandBSCModel\_June2026.R. These data were provided by Rae DeVan \&
+Marcy Litvak at the University of New Mexico.
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{4}
+\item
+  \textbf{mpj\_transects.xslx} This file contains vegetation
+  identification as measured through the LPI methodology in the field by
+  Kirsten Coe and Asha Kannan in October 2025. These data are used to
+  build the vegetation raster in angular\_interpolation\_building.R.
+\item
+  \textbf{results\_coverfrac.csv} This file contains the results of the
+  cover fractions of different vegetation types that is an output of
+  angular\_interpolation\_building.R. Defined below are the relevant
+  columns:
+\end{enumerate}
+
+\begin{itemize}
+\tightlist
+\item
+  year, month, period (day or night), w\_cyano (weight of cyanobacteria
+  crust), w\_lich (weight of lichen crust), w\_moss (weight of moss
+  crust), w\_midveg (weight of mid-level vegetation), w\_subcanopy
+  (weight of pinyon/juniper but not as a canopy), w\_canopy (weight of
+  overhanging canopy), w\_abiotic (weight of nonphotosynthetic material,
+  eg hardware, fallen leaves, etc)\\
+\end{itemize}
+
+\textbf{\emph{Data Analysis}}\\
+1. \textbf{RollingSlope.R}\\
+Authors: Casey Schine and Lauren Marsala\\
+Purpose: time-series method that identifies points where the calculated
+slope changes too drastically compared to other nearby data points. Used
+to clean outliers in LICOR data. Arguments: x, y, width\\
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{1}
+\tightlist
+\item
+  \textbf{PhotosynthesisFunctions.R}\\
+  Authors: Casey Schine and Asha Kannan, adapted from Webb et
+  al.~(1974); Farquhar et al.~(2001); and Ye et al.~(2021)\\
+  Purpose: Functions for temperature, light, and water developed to
+  describe biocrust photosynthesis response\\
+\end{enumerate}
+
+Temperature: calc\_Pg\_fxn\_T\_Tk\_rowwise\\
+Arguments: temp (measured soil temperature); T\_k (controls rate of
+rise); Pgmax (max photosynthesis)\\
+Output: out\_P\\
+Temperature: f\_H\\
+Arguments: Tv (measured temperature); delta\_S (entropy); delta\_Hd
+(deactivation enthalpy); R\_gas (universal gas constant)\\
+Output: f\_H (high-temperature deactivation term)\\
+Dark respiration: calc\_RD\_fxn\_T\_rowwise\\
+Arguments: temp (measured temperature); r\_r (temperature sensitivity
+coefficient); R\_o (base respiration at 0C)\\
+Output: out\_R\\
+
+Light: calc\_PN\_fxn\_I\_rowwise\\
+Arguments: PAR (measured light level); f\_Io\_Icomp (apparent quantum
+yield); b (photoinhibition coefficient); g (curvature coefficient);
+Icomp (light compensation point)\\
+Output: PN\\
+
+Water: low\_water\_response\_fxn\\
+Arguments: WC (normalized water content); WC\_k (threshold water
+content)\\
+Output: low-water activation (out\_P)\\
+Water: high\_water\_response\_fxn\\
+Arguments: WC (normalized water content); toggled intercepts for
+high-water activation\\
+Output: high-water activation (out\_P)\\
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\setcounter{enumi}{2}
+\item
+  \textbf{ye\_et\_al\_light\_fit.xlsx}\\
+  This solver spreadsheet, developed by Casey Schine, was adapted from
+  Ye et al.~(2021) for fitting light curves.\\
+  Inputs: Bin LICOR data for each light level, then average per bin such
+  that there is one value for carbon assimilation per light level.
+  Instructions are in Sheet 2 of the spreadsheet.\\
+  Outputs: Save all parameters that are outputted by the spreadsheet,
+  including the sum of squares.\\
+\item
+  \textbf{angular\_interpolation\_building.R}\\
+  Script developed by Asha Kannan, to build the vegetation raster based
+  on field-collected spatial vegetation cover data.\\
+  Packages required: ``readxl'', ``dplyr'', ``tidyr'', ``ggplot2'',
+  ``terra'', ``stringr'', ``av'', ``here''\\
+  Inputs required: mpj\_transects.xlsx;
+  monthly\_footprint\_climatology\_weight\_map\\
+  Output: results\_coverfrac.csv\\
+\item
+  \textbf{DrylandBSCModel\_June2026.R}\\
+  Script developed by Asha Kannan, as ecophysiology-based model
+  framework.\\
+  Packages required: ``tidyverse'', ``readxl'', ``minpack.lm'',
+  ``lubridate'', ``zoo'', ``patchwork''\\
+  Inputs required: NMEG, PJ\_soil\_allyears\_30min.csv,
+  results\_coverfrac.csv\\
+  Outputs: model\_daily, model\_monthly, model\_annual\\
+\end{enumerate}
+
+\end{document}
