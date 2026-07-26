@@ -20,7 +20,9 @@ library(stringr)
 library(av)
 
 # here::here() anchors all paths to the project root so this script will run on the same machine/OS without editing setwd() calls
-library(here)
+#library(here)
+# or, set to your local wd
+# setwd("/path/to/your/wd/where/transectdata/stored")
 
 # =============================================================
 # Section 2: Site Constants & Coordinate References
@@ -494,7 +496,7 @@ build_veg_idw_raster <- function(fpt_template) {
 # - empty cols for weighted cover fractions
 # ====================================
 # path to Chu et al. footprint raster files
-fpt_dir <- here("data", "monthly_footprint_climatology_weight_map")
+fpt_dir <- here("monthly_footprint_climatology_weight_map")
 
 # get all US-Mpj footprint files
 fpt_files <- list.files(
@@ -551,7 +553,7 @@ results$w_abiotic   <- NA
 template     <- rast(results$filepath[1])
 all_extents  <- lapply(results$filepath, function(f) ext(rast(f)))
 master_ext   <- all_extents[[1]]
-for (ex in all_extents[-1]) master_ext <- union(master_ext, ex)
+for (ex in all_extents[-1]) master_ext <- terra::union(master_ext, ex)
   
 master_template <- rast(
   ext        = master_ext,
