@@ -88,7 +88,7 @@ to clean outliers in LICOR data. Arguments: x, y, width
 
 2.  **PhotosynthesisFunctions.R**  
     Authors: Casey Schine and Asha Kannan, adapted from Webb et
-    al. (1974); Farquhar et al. (2001); and Ye et al. (2021)  
+    al. (1974); Farquhar et al. (2001); and Ye et al. (2007)  
     Purpose: Functions for temperature, light, and water developed to
     describe biocrust photosynthesis response  
 
