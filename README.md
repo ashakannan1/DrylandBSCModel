@@ -122,7 +122,7 @@ Output: high-water activation (out_P)
 
 3.  **ye_et_al_light_fit.xlsx**  
     This solver spreadsheet, developed by Casey Schine, was adapted from
-    Ye et al. (2021) for fitting light curves.  
+    Ye et al. (2007) for fitting light curves.  
     Inputs: Bin LICOR data for each light level, then average per bin
     such that there is one value for carbon assimilation per light
     level. Instructions are in Sheet 2 of the spreadsheet.  
