@@ -17,6 +17,7 @@ library(tidyr)
 library(ggplot2)
 library(terra)
 library(stringr)
+library(here)
 library(av)
 
 # here::here() anchors all paths to the project root so this script will run on the same machine/OS without editing setwd() calls
