@@ -322,7 +322,7 @@ cover_fractions %>%
 # For each pixel in the footprint grid, we want to 
 # 1. calculate its distance and bearing from the tower
 # 2. look up cover fractions at that distance bin from each of the transects
-# 3. weight each transect's cover by inverse angular dist. (closer trnansect
+# 3. weight each transect's cover by inverse angular dist. (closer transect
 # azimuth = higher weight)
 # 4. compute weighted average cover for each functional group
 # 
