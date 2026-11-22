@@ -59,7 +59,7 @@ stopifnot(
 # Model Overview ----------------------------------------------------------
 # For each BSC functional type (moss, cyanobacteria, lichen), gross photosynthesis (Pg)
 # is calculated as: Pg = PgT * PgI/Pgmax * WC_frac * cover_fraction, where
-# Pg_T - temperature-limited Pg (from Webb/Farquhar function)
+# Pg_T - temperature-limited Pg (from Webb/Oleson)
 # Pg_I = light-limited Pg (Ye 2007, non-rectangular hyperbola), scaled by Pgmax
 # WC_frac = water content scalar (0-1) which is an organism-specific function
 # 
@@ -84,7 +84,7 @@ library(patchwork)
 # Load external model functions ----------------------------------------------
 # temperature scaling of Pgmax used a modified Arrhenius function that rises from 0 at lower temperatures,
 # peaks near T_opt, and declines above that optimum temperature (calc_Pg_fx_T_tk_rowwise)
-# f_H(Tv, delta_S, delta_Hd) is a high-temperature deactiviation term (Farquhar et al.)
+# f_H(Tv, delta_S, delta_Hd) is a high-temperature deactiviation term (Oleson et al. 2013)
 # this gets multipled with calc_Pg_fx_T_Tk_rowwise to create the function for temperature 
 # response curve with a thermal optimum and decline
 
@@ -206,7 +206,7 @@ calc_WC_frac_lich <- function(WC_norm) {
 # Syntrichia caninervis dominant
 # Tamm et al. (2018) dark respiration fit; temperature response from Webb
 # -------------------------------------------------------------------------
-# Temperature response (Webb/Farquhar) ------------------------------------
+# Temperature response (Webb/Oleson) ------------------------------------
 # T_k: temperature at which Pg begins to rise significantly (C)
 # Pgmax: maximum gross photosynthesis rate (µmol CO2 m-2 s-1)
 # delta_S: entropy term that controls thermal optimum location (J mol-1 K-1)
@@ -267,7 +267,7 @@ light_frac_moss <- make_light_fraction(f_Io_Icomp_moss, b_moss, g_moss, Icomp_mo
 # Light response fitted to Ouyang & Hu (2017) AC1-Pn figure (10°C curve)
 # Icomp set to 3.98 µmol m-2 s-1 from fitted curve from Ouyang & Hu (2017)
 # -------------------------------------------------------------------------
-# --- Temperature response (Webb/Farquhar) ---
+# --- Temperature response (Webb/Oleson) ---
 # Parameters from literature for cyanobacteria-dominated BSC (Grote et al. 2010)
 # Parameters derived from Grote et al. Table 5 (30C, 40% RWC) and Figure 5
 # Higher T_k and Pgmax than moss reflects cyano heat tolerance
@@ -480,7 +480,7 @@ cat("Model inputs prepared:", nrow(model_input), "timesteps\n")
 # Note air-dry threshold: SWC < 0.023 assumed to be when biological activity is close to 0 / model limit
 #
 # for each organism:
-# 1. calculate temperature-limited Pg (Pg_T) using Webb/Farquhar
+# 1. calculate temperature-limited Pg (Pg_T) using Webb/Oleson
 # 2. calculate water scalar
 # 3. calculate light-limited Pn using Ye (2007); add RD to convert to gross (Pg_I)
 # 4. calculate dark respiration (RD_T) using exponential function
