@@ -1,6 +1,6 @@
 README
 ================
-This repository hosts all the data, data analysis tools, model functions, and model framework for the ecophysiology-based model framework to optimize biocrusts in dryland carbon cycling models, funded by the Department of Biology at Middlebury College and the Middlebury College Senior Research Project Supplemental Grant. <br>
+This repository hosts all the data, data analysis tools, model functions, and model framework for the ecophysiology-based model framework to optimize biocrusts in dryland carbon cycling models, funded by the Department of Biology at Middlebury College and the Middlebury College Senior Research Project Supplemental Grant. It is also associated with the manuscript Kannan et al. (2026) in review. <br>
 ***Data Folders***  
 1. **LICOR** This folder includes all of the raw and standardized data
 from infrared gas analysis lab experiments. This data is further
