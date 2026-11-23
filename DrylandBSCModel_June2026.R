@@ -2,7 +2,7 @@
 ## Moss crust + Cyanobacteria crust + Lichen crust
 # Pinyon-Juniper site (US-Mpj) in Mountainair, New Mexico
 ## written by: Asha Kannan; adapted from Casey Schine Boreal Bryo Model
-## last updated: June 2026
+## last updated: November 2026
 
 
 # SETUP INSTRUCTIONS -------------------------------------------------------
@@ -60,7 +60,7 @@ stopifnot(
 # For each BSC functional type (moss, cyanobacteria, lichen), gross photosynthesis (Pg)
 # is calculated as: Pg = PgT * PgI/Pgmax * WC_frac * cover_fraction, where
 # Pg_T - temperature-limited Pg (from Webb/Oleson)
-# Pg_I = light-limited Pg (Ye 2007, non-rectangular hyperbola), scaled by Pgmax
+# Pg_I = light-limited Pg (Ye 2007, non-rectangular hyperbola), scaled by Pgmax to get 0-1 light scalar
 # WC_frac = water content scalar (0-1) which is an organism-specific function
 # 
 # cover = fractional cover from transect data
@@ -82,9 +82,10 @@ library(patchwork)
 
 
 # Load external model functions ----------------------------------------------
-# temperature scaling of Pgmax used a modified Arrhenius function that rises from 0 at lower temperatures,
+# temperature scaling of Pgmax used a modified function that rises from 0 at lower temperatures,
 # peaks near T_opt, and declines above that optimum temperature (calc_Pg_fx_T_tk_rowwise)
 # f_H(Tv, delta_S, delta_Hd) is a high-temperature deactiviation term (Oleson et al. 2013)
+# see http://opensky.ucar.edu/islandora/object/technotes:515 (Oleson et al. 2013) and Webb et al. (1974)
 # this gets multipled with calc_Pg_fx_T_Tk_rowwise to create the function for temperature 
 # response curve with a thermal optimum and decline
 
@@ -94,11 +95,12 @@ library(patchwork)
 # above WC_k
 # high_water_response_fxn (WC, slope, intercept, Pgmax) provides linear inhibition
 # Pg declines at very high WC (waterlogged) = unimodal response with optimal WC
+# this comes from Schine et al. (2026): https://doi.org/10.1016/j.ecoinf.2026.103935
 
 source(path_functions_file)
 
 # Model functions ---------------------------------------------------------
-# Dark respiration: exponential temperature response (Webb et al., 1974)
+# Dark respiration: exponential temperature response (Webb et al. 1974): https://doi.org/10.1007/BF00345747
 # RD = R_o * exp(r_r * temp)
 # R_o = base respiration at 0C (µmol CO2 m-2 s-1)
 # r_r = temperature sensitivity coefficient (degC-1)
@@ -108,7 +110,7 @@ calc_RD_fxn_T_rowwise <- function(temp, r_r, R_o) {
   return(R_o * exp(r_r * temp))
 }
 
-# Net photosynthesis: Ye (2007) light response
+# Net photosynthesis: Ye (2007) light response: https://doi.org/10.1007/s11099-007-0110-5
 # PN = f_Io_Icomp * ((1-b*PAR) / (1+g*PAR)) * (PAR - Icomp)
 # f_Io_Icomp = quantum yield at low light (initial slope of light response)
 # b = photoinhibition coefficient that causes decline at high PAR
@@ -204,7 +206,7 @@ calc_WC_frac_lich <- function(WC_norm) {
 # -------------------------------------------------------------------------
 # PARAMETERS — MOSS
 # Syntrichia caninervis dominant
-# Tamm et al. (2018) dark respiration fit; temperature response from Webb
+# Tamm et al. (2018) dark respiration fit; temperature response from Webb/Oleson
 # -------------------------------------------------------------------------
 # Temperature response (Webb/Oleson) ------------------------------------
 # T_k: temperature at which Pg begins to rise significantly (C)
@@ -225,6 +227,7 @@ r_r_moss    <- 0.060
 R0_moss <- 0.360
 
 # Water response (low x high function product) ----------------------------
+# adapted from Schine et al. (2026)
 # WC_k: threshold water content for photosynthesis activation (normalized)
 # slope, intercept: parameters of linear high-water inhibition function
 # WC_scale_moss: normalizing constant so water scalar peaks at 1
@@ -240,7 +243,7 @@ WC_scale_moss    <- {
 }
 
 
-# Light response (Ye, 2021) -----------------------------------------------
+# Light response (Ye 2007) -----------------------------------------------
 # Parameters averaged from 5 lab-cultured Syntrichia caninervis samples measured
 # at discrete PAR levels (0-3000 µmol m-2 s-1)
 # Icomp ranges 8.9-21.9 µmol m-2 s-1, reflecting low-light adaptation for shade-tolerant species
@@ -264,8 +267,7 @@ light_frac_moss <- make_light_fraction(f_Io_Icomp_moss, b_moss, g_moss, Icomp_mo
 
 # -------------------------------------------------------------------------
 # PARAMETERS — CYANOBACTERIA
-# Light response fitted to Ouyang & Hu (2017) AC1-Pn figure (10°C curve)
-# Icomp set to 3.98 µmol m-2 s-1 from fitted curve from Ouyang & Hu (2017)
+# Light response fitted to Tamm et al. (2018) Figure 3A at 17C
 # -------------------------------------------------------------------------
 # --- Temperature response (Webb/Oleson) ---
 # Parameters from literature for cyanobacteria-dominated BSC (Grote et al. 2010)
@@ -287,7 +289,7 @@ R0_cyano <- 0.466
 
 # Water response (see above) -----------------------------
 
-# Light response (Ye, 2021) -----------------------------------------------
+# Light response (Ye 2007) -----------------------------------------------
 # parameters fitted to Figure 3A Tamm et al. (2018),
 # which represents cyanobacteria-dominated BSC at 17C
 # Icomp = 195 µmol m-2 s-1, consistent with low light compensation points reported for cyano BSC
